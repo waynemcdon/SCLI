@@ -2252,7 +2252,7 @@ def run_scan(hostname: str, ssh_port: int = 22, skip_ssh: bool = False,
 
     total = len(checks)
     for i, (label, fn) in enumerate(checks, 1):
-        print(f"  {CYAN}[{i}/{total}]{RESET} Checking {label}...", end="\r", flush=True)
+        print(f"  {CYAN}[{i}/{total}]{RESET} Checking {label}...", flush=True)
         try:
             results = fn()
             all_findings.extend(results)
@@ -2264,7 +2264,6 @@ def run_scan(hostname: str, ssh_port: int = 22, skip_ssh: bool = False,
                 "evidence": str(e), "remediation": "",
                 "status": "info", "score_impact": 0
             })
-        print(" " * 60, end="\r")  # clear line
 
     return all_findings
 
