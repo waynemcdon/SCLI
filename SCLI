@@ -219,6 +219,18 @@ def run_scan(args: list[str], open_html: bool = False) -> int:
     # its bundled OpenSSL — no ABI issue is possible.
     if getattr(sys, "frozen", False):
         import importlib.util
+        # ── Restore original LD_LIBRARY_PATH ──────────────────────────────
+        # PyInstaller prepends _MEIPASS to LD_LIBRARY_PATH so bundled .so
+        # files are found.  System tools spawned by spat_cli.py (nslookup,
+        # curl, dig, openssl) inherit this and may load incompatible bundled
+        # libs, silently producing empty output (e.g. nslookup returns no
+        # TXT records).  Restoring the pre-injection value fixes this;
+        # Python's already-loaded runtime is unaffected.
+        _orig_ldpath = os.environ.get("LD_LIBRARY_PATH_ORIG", "")
+        if _orig_ldpath:
+            os.environ["LD_LIBRARY_PATH"] = _orig_ldpath
+        else:
+            os.environ.pop("LD_LIBRARY_PATH", None)
         # Load spat_cli as a regular module (NOT __main__) — using run_name="__main__"
         # with runpy causes PyInstaller to re-execute the frozen SCLI entry point.
         # importlib.util loads the physical .py file directly and we call main() ourselves.
