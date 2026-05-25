@@ -41,7 +41,13 @@ else:
     HERE   = os.path.dirname(os.path.abspath(__file__))
     SCRIPT = os.path.join(HERE, "spat_cli", "spat_cli.py")
 
-PYTHON = shutil.which("python3") or shutil.which("python") or sys.executable
+# When frozen by PyInstaller, always use the bundled interpreter so that
+# spat_cli.py runs against the same Python/OpenSSL that was packaged —
+# not the system Python on the target host (which may have a different
+# OpenSSL ABI and will inherit PyInstaller's LD_LIBRARY_PATH).
+PYTHON = sys.executable if getattr(sys, "frozen", False) else (
+    shutil.which("python3") or shutil.which("python") or sys.executable
+)
 
 # ── ANSI colour helpers ────────────────────────────────────────────────────
 _ANSI_RE  = re.compile(r"\x1b\[[0-9;]*[mK]")
