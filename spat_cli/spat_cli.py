@@ -962,12 +962,14 @@ def check_email_security(hostname: str) -> list:
     # ── MX records ─────────────────────────────────────────────────────────
     mx = _dns_mx_records(hostname)
     # Null MX: single record with empty/root exchange (RFC 7505).
-    # nslookup returns the full line, e.g. "host  MX preference = 0, mail exchanger = (root)"
-    # so we must extract just the exchange value rather than comparing the whole line.
+    # nslookup format:  "host  mail exchanger = 0 ."
+    # The field after "=" is "PRIORITY EXCHANGE", so we must skip the numeric
+    # priority and capture the exchange hostname.  The old pattern captured the
+    # priority digit instead of the exchange, making null-MX go undetected.
     if not mx:
         null_mx = True
     elif len(mx) == 1:
-        _mx_m = re.search(r'mail\s+exchang(?:er|e)\s*=\s*(\S+)', mx[0], re.IGNORECASE)
+        _mx_m = re.search(r'mail\s+exchang(?:er|e)\s*=\s*(?:\d+\s+)?(\S+)', mx[0], re.IGNORECASE)
         _exchange = _mx_m.group(1).rstrip('.') if _mx_m else mx[0].strip().rstrip('.')
         null_mx = _exchange in ('', '.', '(root)', 'root')
     else:
