@@ -206,6 +206,58 @@ def run_scan(args: list[str], open_html: bool = False) -> int:
     except (ValueError, IndexError):
         pass
 
+    # ── Print command header (matches GUI's dim command preview) ──────────
+    short = " ".join(os.path.basename(a) if a == SCRIPT else a for a in args)
+    print(_c("dim") + "$ " + short + _c("reset"))
+    print(_c("dim") + "─" * 60 + _c("reset"))
+
+    # ── When frozen by PyInstaller, run spat_cli in-process via runpy ─────
+    # Spawning a subprocess inherits PyInstaller's LD_LIBRARY_PATH, which
+    # causes the system Python on the target host to load the bundled
+    # libcrypto.so.3 and fail with an OpenSSL ABI mismatch.  Running via
+    # runpy inside the frozen process uses only the bundled interpreter and
+    # its bundled OpenSSL — no ABI issue is possible.
+    if getattr(sys, "frozen", False):
+        import importlib.util
+        # Load spat_cli as a regular module (NOT __main__) — using run_name="__main__"
+        # with runpy causes PyInstaller to re-execute the frozen SCLI entry point.
+        # importlib.util loads the physical .py file directly and we call main() ourselves.
+        spec = importlib.util.spec_from_file_location("_spat_cli", SCRIPT)
+        mod  = importlib.util.module_from_spec(spec)
+        # argv[1:] must be [hostname, --flags...] for spat_cli's argparse
+        saved_argv = sys.argv[:]
+        sys.argv = [SCRIPT] + args[2:]
+        rc = 0
+        try:
+            spec.loader.exec_module(mod)   # defines all functions; if __name__=="__main__" skipped
+            mod.main()                      # call main() directly
+        except SystemExit as e:
+            rc = int(e.code) if isinstance(e.code, int) else (1 if e.code else 0)
+        except KeyboardInterrupt:
+            rc = 130
+        except Exception as exc:
+            print(_c("fail") + f"\nError: {exc}" + _c("reset"), file=sys.stderr)
+            rc = -1
+        finally:
+            sys.argv = saved_argv
+            sys.modules.pop("_spat_cli", None)
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        if rc == 0:
+            print(_c("pass") + f"\n✔ Finished with no failures  ({ts})" + _c("reset"))
+        elif rc == 1:
+            print(_c("warn") + f"\n⚠ Finished — one or more failures detected  ({ts})" + _c("reset"))
+        elif rc != 130:
+            print(_c("fail") + f"\n✘ Aborted (exit {rc})  ({ts})" + _c("reset"))
+
+        if open_html and last_html_path:
+            path = os.path.normpath(last_html_path)
+            if os.path.exists(path):
+                webbrowser.open_new_tab(Path(path).as_uri())
+
+        return rc
+
+    # ── Not frozen: stream subprocess output with ANSI colorization ───────
     proc: subprocess.Popen | None = None
 
     def _on_sigint(sig, frame):           # pylint: disable=unused-argument
@@ -214,11 +266,6 @@ def run_scan(args: list[str], open_html: bool = False) -> int:
         sys.exit(130)
 
     signal.signal(signal.SIGINT, _on_sigint)
-
-    # ── Print command header (matches GUI's dim command preview) ──────────
-    short = " ".join(os.path.basename(a) if a == SCRIPT else a for a in args)
-    print(_c("dim") + "$ " + short + _c("reset"))
-    print(_c("dim") + "─" * 60 + _c("reset"))
 
     try:
         proc = subprocess.Popen(
