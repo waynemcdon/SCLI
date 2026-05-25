@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""
+SCLI — Security Posture Analysis Tool  (Linux CLI)
+by Antibody Cyber Technology, LLC
+
+A no-GUI, terminal-native version of spat_linux.py.
+Streams spat_cli.py output to stdout with ANSI colour coding,
+mirrors every scan option available in the GUI, and exits with
+the same return code as spat_cli.py.
+"""
+
+import os
+import re
+import sys
+import shutil
+import signal
+import argparse
+import subprocess
+import webbrowser
+from pathlib import Path
+from datetime import datetime
+
+# ── Paths ──────────────────────────────────────────────────────────────────
+if getattr(sys, "frozen", False):
+    HERE   = os.path.dirname(sys.executable)
+    SCRIPT = os.path.join(sys._MEIPASS, "spat_cli", "spat_cli.py")
+else:
+    HERE   = os.path.dirname(os.path.abspath(__file__))
+    SCRIPT = os.path.join(HERE, "spat_cli", "spat_cli.py")
+
+PYTHON = shutil.which("python3") or shutil.which("python") or sys.executable
+
+# ── ANSI colour helpers ────────────────────────────────────────────────────
+_ANSI_RE  = re.compile(r"\x1b\[[0-9;]*[mK]")
+USE_COLOR = sys.stdout.isatty()
+
+# colour map — same semantic names as the GUI colour tags
+_CLR = {
+    "pass":   "\033[32m",       # green
+    "fail":   "\033[31m",       # red
+    "warn":   "\033[33m",       # yellow
+    "info":   "\033[36m",       # cyan
+    "header": "\033[1;36m",     # bold cyan
+    "score":  "\033[1;91m",     # bold bright-red (matches GUI ACCENT)
+    "dim":    "\033[2m",        # dim
+    "reset":  "\033[0m",
+}
+
+def _c(name: str) -> str:
+    return _CLR[name] if USE_COLOR else ""
+
+def strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+def classify(line: str) -> str:
+    """Mirror spat_linux.py's SpatGUI._classify() — same rules, same tags."""
+    lo = line.lower()
+    if any(x in lo for x in ("─", "═", "security score", "grade:")):
+        return "score" if ("score" in lo or "grade" in lo) else "header"
+    if "✔" in line or " pass" in lo:
+        return "pass"
+    if "✘" in line or " fail" in lo:
+        return "fail"
+    if "⚠" in line or " warn" in lo:
+        return "warn"
+    if "ℹ" in line or "[info]" in lo or "info" in lo:
+        return "info"
+    if line.startswith("  [") or "checking" in lo:
+        return "dim"
+    return ""
+
+def colorize(line: str) -> str:
+    tag = classify(line)
+    if not USE_COLOR or not tag:
+        return line
+    return _c(tag) + line + _c("reset")
+
+# ── Scan profiles ──────────────────────────────────────────────────────────
+# Keys mirror the short CLI names; descriptions match the GUI dropdown labels.
+PROFILES: dict[str, list[str]] = {
+    "full":          [],
+    "standard":      ["--skip-vt"],
+    "web-only":      ["--skip-ssh", "--skip-vt"],
+    "web-intel":     ["--skip-ssh"],
+    "ssh-only":      ["--ssh-only"],
+    "full-json":     ["--json", "report.json"],
+    "standard-json": ["--skip-vt", "--json", "report.json"],
+}
+
+PROFILE_HELP: dict[str, str] = {
+    "full":          "Full Scan  (web + SSH + threat intel)",
+    "standard":      "Standard  (web + SSH, no threat intel)",
+    "web-only":      "Web Only  (no SSH, no threat intel)",
+    "web-intel":     "Web + Threat Intel  (no SSH)",
+    "ssh-only":      "SSH Only",
+    "full-json":     "Full Scan + JSON report",
+    "standard-json": "Standard + JSON report",
+}
+
+# ── Report path helpers ────────────────────────────────────────────────────
+
+def _resolve_report(filename: str, scan_ts: str) -> str:
+    """Make a report filename absolute and inject the per-scan timestamp.
+
+    Mirrors SpatGUI._resolve_report() so filenames are consistent with
+    what the GUI produces.
+
+    e.g.  "report.html"         -> "/home/wm/tmp/report_20260525_143000.html"
+          "/scans/out.html"     -> "/scans/out_20260525_143000.html"
+    """
+    if not filename:
+        return ""
+    if not os.path.isabs(filename):
+        filename = os.path.join(HERE, filename)
+    if scan_ts:
+        base, ext = os.path.splitext(filename)
+        if not base.endswith(scan_ts):
+            filename = f"{base}_{scan_ts}{ext}"
+    return filename
+
+
+def build_args(hostname: str, profile: str, ssh_port: str,
+               json_out: str, html_out: str, scan_ts: str) -> list[str]:
+    """Build the full spat_cli.py argument list.
+
+    Mirrors SpatGUI._build_args() exactly: profile args first, then
+    field overrides, then SSH port prepend, then default HTML guarantee.
+    """
+    profile_args = list(PROFILES.get(profile, []))
+
+    # ── JSON override ──────────────────────────────────────────────────────
+    if json_out:
+        if not os.path.splitext(json_out)[1]:
+            json_out += ".json"
+        resolved = _resolve_report(json_out, scan_ts)
+        try:
+            idx = profile_args.index("--json")
+            profile_args[idx + 1] = resolved
+        except ValueError:
+            profile_args += ["--json", resolved]
+    else:
+        try:
+            idx = profile_args.index("--json")
+            profile_args[idx + 1] = _resolve_report(profile_args[idx + 1], scan_ts)
+        except ValueError:
+            pass
+
+    # ── HTML override ──────────────────────────────────────────────────────
+    if html_out:
+        if not os.path.splitext(html_out)[1]:
+            html_out += ".html"
+        resolved = _resolve_report(html_out, scan_ts)
+        try:
+            idx = profile_args.index("--html")
+            profile_args[idx + 1] = resolved
+        except ValueError:
+            profile_args += ["--html", resolved]
+    else:
+        try:
+            idx = profile_args.index("--html")
+            profile_args[idx + 1] = _resolve_report(profile_args[idx + 1], scan_ts)
+        except ValueError:
+            pass
+
+    # ── Non-default SSH port ───────────────────────────────────────────────
+    if ssh_port and ssh_port != "22":
+        profile_args = ["--ssh-port", ssh_port] + profile_args
+
+    # ── Always produce an HTML report (GUI guarantees this too) ───────────
+    if "--html" not in profile_args:
+        profile_args += ["--html", _resolve_report("report.html", scan_ts)]
+
+    # ── Normalise to full URL ──────────────────────────────────────────────
+    if not hostname.startswith(("https://", "http://")):
+        hostname = "https://" + hostname
+
+    return [PYTHON, SCRIPT, hostname] + profile_args
+
+# ── Scan runner ────────────────────────────────────────────────────────────
+
+def run_scan(args: list[str], open_html: bool = False) -> int:
+    """Stream spat_cli output to stdout; return its exit code."""
+    last_html_path = ""
+    try:
+        idx = args.index("--html")
+        last_html_path = args[idx + 1]
+    except (ValueError, IndexError):
+        pass
+
+    proc: subprocess.Popen | None = None
+
+    def _on_sigint(sig, frame):           # pylint: disable=unused-argument
+        if proc is not None:
+            proc.terminate()
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    # ── Print command header (matches GUI's dim command preview) ──────────
+    short = " ".join(os.path.basename(a) if a == SCRIPT else a for a in args)
+    print(_c("dim") + "$ " + short + _c("reset"))
+    print(_c("dim") + "─" * 60 + _c("reset"))
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=HERE,
+        )
+
+        for line in proc.stdout:
+            clean = strip_ansi(line)
+            # Track confirmed HTML path from CLI output (same as GUI _stream)
+            if "html report saved:" in clean.lower():
+                saved = clean.split(":", 1)[-1].strip()
+                if saved:
+                    last_html_path = os.path.normpath(saved)
+            print(colorize(clean), end="")
+
+        proc.wait()
+        rc = proc.returncode
+
+    except FileNotFoundError:
+        print(
+            _c("fail") + f"Error: spat_cli.py not found at:\n  {SCRIPT}" + _c("reset"),
+            file=sys.stderr,
+        )
+        return 2
+    except Exception as exc:
+        print(_c("fail") + f"\nError: {exc}" + _c("reset"), file=sys.stderr)
+        rc = -1
+
+    # ── Result summary (mirrors GUI _on_done messages) ────────────────────
+    ts = datetime.now().strftime("%H:%M:%S")
+    if rc == 0:
+        print(_c("pass") + f"\n✔ Finished with no failures  ({ts})" + _c("reset"))
+    elif rc == 1:
+        print(_c("warn") + f"\n⚠ Finished — one or more failures detected  ({ts})" + _c("reset"))
+    else:
+        print(_c("fail") + f"\n✘ Aborted (exit {rc})  ({ts})" + _c("reset"))
+
+    # ── Open HTML report in browser (mirrors GUI _open_html) ─────────────
+    if open_html and last_html_path:
+        path = os.path.normpath(last_html_path)
+        if os.path.exists(path):
+            webbrowser.open_new_tab(Path(path).as_uri())
+        else:
+            print(
+                _c("warn") + f"⚠ HTML report not found at: {path}" + _c("reset"),
+                file=sys.stderr,
+            )
+
+    return rc
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def list_profiles() -> None:
+    print(_c("header") + "Available scan profiles:" + _c("reset"))
+    for key, desc in PROFILE_HELP.items():
+        print(f"  {_c('info')}{key:<20}{_c('reset')} {desc}")
+
+def print_header() -> None:
+    print(_c("score") + "SCLI" + _c("reset") +
+          "  —  Security Posture Analysis Tool")
+    print(_c("dim") + "     by Antibody Cyber Technology, LLC" + _c("reset"))
+    print()
+
+# ── Entry point ────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="SCLI",
+        description=(
+            "SCLI — Security Posture Analysis Tool (Linux CLI)\n"
+            "by Antibody Cyber Technology, LLC\n\n"
+            "Terminal-native equivalent of spat_linux.py with no GUI dependency."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+examples:
+  SCLI example.com
+  SCLI example.com --profile standard
+  SCLI example.com --profile web-only --html /tmp/report.html --open
+  SCLI example.com --ssh-port 2222 --json scan.json
+  SCLI --list-profiles
+
+whitepaper:
+  https://spatcyber.com/static/SPAT_Whitepaper.pdf
+        """,
+    )
+
+    parser.add_argument(
+        "hostname", nargs="?",
+        help="Target hostname or URL  (e.g. example.com or https://example.com)",
+    )
+    parser.add_argument(
+        "--profile", "-p",
+        default="full",
+        choices=list(PROFILES.keys()),
+        metavar="PROFILE",
+        help="Scan profile (default: full).  Use --list-profiles to see all.",
+    )
+    parser.add_argument(
+        "--ssh-port",
+        default="22",
+        metavar="PORT",
+        help="SSH port to scan (default: 22)",
+    )
+    parser.add_argument(
+        "--json",
+        dest="json_out",
+        default="",
+        metavar="FILE",
+        help="Write JSON report to FILE",
+    )
+    parser.add_argument(
+        "--html",
+        dest="html_out",
+        default="",
+        metavar="FILE",
+        help="Write HTML report to FILE  (default: report_<timestamp>.html)",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the HTML report in a browser after the scan completes",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List available scan profiles and exit",
+    )
+
+    args = parser.parse_args()
+
+    if args.list_profiles:
+        list_profiles()
+        sys.exit(0)
+
+    if not args.hostname:
+        parser.error("hostname is required  (e.g. example.com)")
+
+    print_header()
+
+    scan_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cmd = build_args(
+        hostname=args.hostname,
+        profile=args.profile,
+        ssh_port=args.ssh_port,
+        json_out=args.json_out,
+        html_out=args.html_out,
+        scan_ts=scan_ts,
+    )
+
+    sys.exit(run_scan(cmd, open_html=args.open))
+
+
+if __name__ == "__main__":
+    main()
