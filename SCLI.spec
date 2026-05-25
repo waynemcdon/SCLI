@@ -12,7 +12,15 @@ a = Analysis(
     datas=[
         ('spat_cli/spat_cli.py', 'spat_cli'),
     ],
-    hiddenimports=[],
+    # spat_cli.py is bundled as a data file so PyInstaller never analyses its
+    # imports.  List them explicitly so they are included in the binary.
+    hiddenimports=[
+        'json', 'socket', 'ssl', '_ssl', 'struct', 'time', 'threading',
+        'warnings', 'collections', 'base64', 'argparse',
+        'concurrent', 'concurrent.futures',
+        'datetime', 'pathlib',
+        'urllib', 'urllib.parse', 'urllib.request', 'urllib.error',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
