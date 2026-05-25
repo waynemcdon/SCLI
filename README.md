@@ -12,6 +12,7 @@ Huntsville, Alabama · Cybersecurity since 2002
 SCLI is a direct conversion of `spat_linux.py` (the SPAT Linux GUI) with every feature preserved and the tkinter dependency removed.
 
 What is SPAT?
+
 SPAT is an automated external security assessment tool that scans and evaluates the public-facing security defenses of websites and network servers. Developed by Antibody Cyber Technology, LLC, a specialized cybersecurity company based out of Huntsville, Alabama, the scanner proactively probes a target domain from an external network perspective to map its attack surface and reveal potential technical weaknesses before they can be exploited.
 
 All 17 checks operate against the domain name itself — not a specific URL path. SPAT queries public DNS, makes direct TLS/socket connections, issues HTTP requests, and checks your domain against 90+ global threat intelligence feeds — the same feeds used by enterprise firewalls, browsers, and email security filters worldwide — using only the bare hostname (e.g. example.com).
