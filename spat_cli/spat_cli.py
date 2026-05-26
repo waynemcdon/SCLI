@@ -1591,8 +1591,8 @@ def check_csp_quality(hostname: str) -> list:
     # 'unsafe-inline' in style-src only is a CSS injection risk (severity MEDIUM);
     # in script-src or default-src it is a full XSS bypass (severity HIGH).
     script_directives = set(directives.get("script-src", []) + directives.get("default-src", []))
-    script_directives = {t.lower() for t in script_directives}
-    style_directives  = {t.lower() for t in directives.get("style-src", [])}
+    script_directives = {t.lower().strip("'") for t in script_directives}
+    style_directives  = {t.lower().strip("'") for t in directives.get("style-src", [])}
 
     for kw, (desc, sev, impact) in _CSP_UNSAFE.items():
         kw_lower = kw.lower()
