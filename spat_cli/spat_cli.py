@@ -86,6 +86,8 @@ def _read_env_key(var_name: str) -> str:
     # cwd — spat_gui.exe launches us with cwd=HERE (the exe's folder),
     # so a .env placed next to the exe is always found this way.
     candidates.append(Path(os.getcwd()) / ".env")
+    # Persistent user-level config — survives binary updates and relocations
+    candidates.append(Path.home() / ".config" / "spat" / ".env")
 
     for env_path in candidates:
         if env_path.exists():
