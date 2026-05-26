@@ -1966,16 +1966,7 @@ def check_virustotal(hostname: str) -> list:
     findings = []
     api_key = _read_env_key("VIRUSTOTAL_API_KEY")
     if not api_key:
-        return [{
-            "name": "VirusTotal Lookup Skipped",
-            "category": "Threat Intelligence",
-            "severity": "INFO",
-            "description": "VirusTotal API key not configured. Threat intelligence check was not performed.",
-            "evidence": "Get a free API key at https://www.virustotal.com/gui/join-us",
-            "remediation": "Add VIRUSTOTAL_API_KEY=<your-key> to the .env file next to spat_cli.py.",
-            "status": "info",
-            "score_impact": 0,
-        }]
+        return []  # No API key — skip silently
 
     api_url = f"https://www.virustotal.com/api/v3/domains/{hostname}"
     headers = {"x-apikey": api_key}
@@ -2078,16 +2069,7 @@ def check_urlhaus(hostname: str) -> list:
     # Resolve Auth-Key (required since 2025) — env var or .env file
     auth_key = _read_env_key("URLHAUS_AUTH_KEY")
     if not auth_key:
-        return [{
-            "name": "URLhaus Lookup Skipped",
-            "category": "Threat Intelligence",
-            "severity": "INFO",
-            "description": "URLhaus API key not configured. Set URLHAUS_AUTH_KEY in environment or .env file.",
-            "evidence": "Get a free key at https://auth.abuse.ch/",
-            "remediation": "Add URLHAUS_AUTH_KEY=<your-key> to the .env file next to spat_cli.py.",
-            "status": "info",
-            "score_impact": 0,
-        }]
+        return []  # No API key — skip silently
 
     url = "https://urlhaus-api.abuse.ch/v1/host/"
     data = _uparse.urlencode({"host": hostname}).encode("utf-8")
